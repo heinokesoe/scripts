@@ -1,0 +1,290 @@
+#!/bin/bash
+
+if ! [[ $(id -u) = 0 ]]; then
+	echo "This script must be run as root!"
+	exit 1
+fi
+
+title() {
+	clear
+	echo -ne "
+################################################################################
+#                                                                              #
+#                This is Automated Ubuntu Server Setup Script                  #
+#                                                                              #
+#                                    By                                        #
+#                                                                              #
+#                               Hein Oke Soe                                   #
+#                                                                              #
+################################################################################
+
+"
+}
+
+install_prerequisites() {
+	title
+	echo -ne "
+--------------------------------------------------------------------------------
+                        Installing Prerequisites
+--------------------------------------------------------------------------------
+
+"
+	apt update
+	apt install -y --no-install-recommends curl wget apt-transport-https \
+		ca-certificates software-properties-common unzip gnupg
+}
+
+disable_firewall() {
+	title
+	is_active="$(systemctl is-active ufw)"
+	if [[ "$is_active" == "active" ]]; then
+		echo -ne "
+--------------------------------------------------------------------------------
+                        Disabling Firewall
+--------------------------------------------------------------------------------
+
+"
+		systemctl stop ufw
+		systemctl disable ufw
+		systemctl daemon-reload
+		systemctl reset-failed
+	fi
+
+}
+
+install() {
+    install_"$1"
+    [[ $? -eq 0 ]] \
+    && echo -e "\n$1 has been successfully installed.\n" \
+    || echo -e "\n$1 cannot be installed as the errors occured\n"
+    continue_or_exit
+}
+
+installbanner() {
+	echo -ne "
+--------------------------------------------------------------------------------
+                    Installing "$1"
+--------------------------------------------------------------------------------
+
+"
+}
+
+finishbanner() {
+	echo -ne "
+--------------------------------------------------------------------------------
+                Finished Installing "$1"
+--------------------------------------------------------------------------------
+
+"
+}
+
+continue_or_exit() {
+	echo "Do you want to go back to menu or exit?"
+	options=("Go back to menu" "Exit")
+	select_option $? 2 "${options[@]}"
+
+	case $? in
+	0) start_install;;
+	1) exit;;
+	esac
+}
+
+install_docker() {
+	title
+    installbanner "Docker"
+	curl -fsSL https://download.docker.com/linux/ubuntu/gpg | apt-key --keyring /etc/apt/trusted.gpg.d/docker.gpg add -
+	echo "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list
+	apt update
+	apt install -y docker-ce docker-compose
+    finishbanner "Docker"
+}
+
+install_outline() {
+	title
+    installbanner "Outline Vpn Server"
+	# This is the official install command of outline server
+	bash -c "$(wget -qO- https://raw.githubusercontent.com/Jigsaw-Code/outline-server/master/src/server_manager/install_scripts/install_server.sh)"
+    finishbanner "Outline Vpn Server"
+}
+
+install_rclone() {
+	title
+    installbanner "Rclone"
+	# This is the official install command of rclone
+	curl https://rclone.org/install.sh | bash
+    finishbanner "Rclone"
+}
+
+install_wireguard() {
+	title
+    installbanner "Wireguard Server"
+	# https://github.com/Nyr/wireguard-install
+	wget https://git.io/wireguard -O wireguard-install.sh && bash wireguard-install.sh
+    finishbanner "Wireguard Server"
+}
+
+install_dwm() {
+	title
+    installbanner "DWM"
+	apt install dwm suckless-tools stterm xorg -y --no-install-recommends
+    finishbanner "DWM"
+}
+
+install_brave() {
+	title
+    installbanner "Brave Browser"
+	curl -fsSLo /usr/share/keyrings/brave-browser-archive-keyring.gpg https://brave-browser-apt-release.s3.brave.com/brave-browser-archive-keyring.gpg
+	echo "deb [signed-by=/usr/share/keyrings/brave-browser-archive-keyring.gpg arch=amd64] https://brave-browser-apt-release.s3.brave.com/ stable main"| tee /etc/apt/sources.list.d/brave-browser-release.list
+	apt update
+	apt install brave-browser -y
+    finishbanner "Brave Browser"
+}
+
+install_xrdp() {
+	title
+    installbanner "Xrdp Server"
+	apt install xrdp -y
+	sed -i 's/^port=3389/port=tcp:\/\/.:3389/' /etc/xrdp/xrdp.ini
+	systemctl restart xrdp
+    finishbanner "Xrdp Server"
+}
+
+
+select_option() {
+
+	# little helpers for terminal print control and key input
+	ESC=$( printf "\033")
+	cursor_blink_on()  { printf "%s[?25h" "$ESC"; }
+	cursor_blink_off() { printf "%s[?25l" "$ESC"; }
+	cursor_to()        { printf "%s[%s;%sH" "$ESC" "$1" "${2:-1}"; }
+	print_option()     { printf "%s   %s " "$2" "$1"; }
+	print_selected()   { printf "%s  %s[7m $1 %s[27m" "$2" "$ESC" "$ESC"; }
+	get_cursor_row()   { IFS=';' read -sdR -p $'\E[6n' ROW COL; echo "${ROW#*[}"; }
+	get_cursor_col()   { IFS=';' read -sdR -p $'\E[6n' ROW COL; echo "${COL#*[}"; }
+	key_input()         {
+		local key
+		IFS= read -rsn1 key 2>/dev/null >&2
+		if [[ $key = ""      ]]; then echo enter; fi
+		if [[ $key = $'\x20' ]]; then echo space; fi
+		if [[ $key = "k" ]]; then echo up; fi
+		if [[ $key = "j" ]]; then echo down; fi
+		if [[ $key = "h" ]]; then echo left; fi
+		if [[ $key = "l" ]]; then echo right; fi
+		if [[ $key = "a" ]]; then echo all; fi
+		if [[ $key = "n" ]]; then echo none; fi
+		if [[ $key = $'\x1b' ]]; then
+			read -rsn2 key
+			if [[ $key = [A || $key = k ]]; then echo up; fi
+			if [[ $key = [B || $key = j ]]; then echo down; fi
+			if [[ $key = [C || $key = l ]]; then echo right; fi
+			if [[ $key = [D || $key = h ]]; then echo left; fi
+		fi
+	}
+	print_options_multicol() {
+		# print options by overwriting the last lines
+		local curr_col=$1
+		local curr_row=$2
+		local curr_idx=0
+
+		local idx=0
+		local row=0
+		local col=0
+
+		curr_idx=$(( curr_col + curr_row * colmax ))
+
+		for option in "${options[@]}"; do
+
+			row=$(( idx / colmax ))
+			col=$(( idx - row * colmax ))
+
+			cursor_to $(( startrow + row + 1 )) $(( offset * col + 1 ))
+			if [[ $idx -eq $curr_idx ]]; then
+				print_selected "$option"
+			else
+				print_option "$option"
+			fi
+			((idx++))
+		done
+	}
+
+	# initially print empty new lines (scroll down if at bottom of screen)
+	for opt; do printf "\n"; done
+
+	# determine current screen position for overwriting the options
+	# local return_value=$1
+	local lastrow=$(get_cursor_row)
+	local lastcol=$(get_cursor_col)
+	local startrow=$(( lastrow - $# ))
+	# local startcol=1
+	# local lines=$( tput lines )
+	local cols=$(tput cols)
+	local colmax=$2
+	local offset=$(( cols / colmax ))
+
+	# local size=$4
+	shift 4
+
+	# ensure cursor and input echoing back on upon a ctrl+c during read -s
+	trap "cursor_blink_on; stty echo; printf '\n'; exit" 2
+	cursor_blink_off
+
+	local active_row=0
+	local active_col=0
+	while true; do
+		print_options_multicol $active_col $active_row
+		# user key control
+		case $(key_input) in
+
+			enter)  break;;
+
+			up)  (( active_row-- ));
+				if [[ "$active_row" -lt 0 ]]; then active_row=0; fi;;
+
+			down)  (( active_row++ ));
+				if [[ $(( ${#options[@]} % colmax )) -ne 0 ]]; then
+					if [[ "$active_row" -ge $(( ${#options[@]} / colmax )) ]]; then active_row=$(( ${#options[@]} / colmax )); fi
+				else
+					if [[ "$active_row" -ge $(( ${#options[@]} / colmax -1 )) ]]; then active_row=$(( ${#options[@]} / colmax -1 )); fi
+				fi;;
+
+			left)  (( active_col = active_col - 1 ));
+				if [[ "$active_col" -lt 0 ]]; then active_col=0; fi;;
+
+			right)  (( active_col = active_col + 1 ));
+				if [[ "$active_col" -ge "$colmax" ]]; then active_col=$(( colmax - 1 )) ; fi;;
+
+		esac
+	done
+
+	# cursor position back to normal
+	cursor_to "$lastrow"
+	printf "\n"
+	cursor_blink_on
+
+	return $(( active_col + active_row * colmax ))
+}
+
+start_install() {
+	title
+	echo "Choose one to install: "
+	options=("Docker" "Outline Vpn Server" "Rclone" "Wireguard" "DWM" "Brave Browser" "Xrdp Server" "Exit")
+	select_option $? 2 "${options[@]}"
+
+	case $? in
+	0) install docker;;
+	1) install outline;;
+	2) install rclone;;
+	3) install wireguard;;
+	4) install dwm;;
+	5) install brave;;
+	6) install xrdp;;
+	7) exit;;
+	esac
+}
+
+title
+install_prerequisites
+disable_firewall
+start_install
+
+exit 0

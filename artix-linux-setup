@@ -1,0 +1,378 @@
+#!/bin/bash
+
+export user=$(whoami)
+
+title() {
+	clear
+	echo -ne "
+################################################################################
+#                                                                              #
+#    This is Automated Artix Linux Setup Script to install everything I use    #
+#                                                                              #
+#                                    By                                        #
+#                                                                              #
+#                               Hein Oke Soe                                   #
+#                                                                              #
+################################################################################
+
+"
+}
+
+place_dotfiles() {
+	title
+	echo -ne "
+--------------------------------------------------------------------------------
+                        Placing dotfiles
+--------------------------------------------------------------------------------
+
+"
+	sudo pacman -S --noconfirm git
+	git clone https://github.com/heinokesoe/dotfiles
+	cd dotfiles
+	sudo rm -r .git README.md
+	shopt -s dotglob
+	mv * ~
+	cd .. && rm -r dotfiles
+	cd ~/.local/share && ln -s wallpaper.jpg bg
+}
+
+install_xorg() {
+	title
+	echo -ne "
+--------------------------------------------------------------------------------
+                        Installing Xorg Packages
+--------------------------------------------------------------------------------
+
+"
+	sudo pacman -S --noconfirm --needed --disable-download-timeout xorg \
+		xorg-xinit xorg-xprop xclip xdotool xcompmgr
+}
+
+install_prerequisites() {
+	title
+	echo -ne "
+--------------------------------------------------------------------------------
+                        Installing Prerequisites
+--------------------------------------------------------------------------------
+
+"
+	sudo pacman -S --noconfirm --needed --disable-download-timeout libx11 \
+		libxft libxinerama freetype2 fontconfig go bc
+}
+
+install_fonts_and_themes() {
+	title
+	echo -ne "
+--------------------------------------------------------------------------------
+                        Installing Fonts and Themes
+--------------------------------------------------------------------------------
+
+"
+	sudo pacman -S --noconfirm --needed --disable-download-timeout lxappearance \
+		qt5ct artix-dark-theme noto-fonts noto-fonts-cjk noto-fonts-emoji
+}
+
+install_utilities() {
+	title
+	echo -ne "
+--------------------------------------------------------------------------------
+                        Installing Utilities
+--------------------------------------------------------------------------------
+
+"
+	sudo pacman -S --noconfirm --needed --disable-download-timeout dosfstools \
+		xwallpaper ffmpeg neovim mpv man-db remmina ibus bat htop exa p7zip \
+		ntfs-3g pulseaudio-alsa pulsemixer pamixer maim unrar unzip zathura \
+		zathura-pdf-mupdf poppler mediainfo fzf highlight slock moreutils \
+		gnome-disk-utility linux-lts-headers wireguard-runit exfat-utils \
+		libnotify sxiv dunst bmon gparted freerdp net-tools scrcpy \
+		openresolv usbutils dkms
+}
+
+install_yay() {
+	title
+	echo -ne "
+--------------------------------------------------------------------------------
+                            Installing Yay
+--------------------------------------------------------------------------------
+
+"
+	cd /opt
+	sudo git clone https://aur.archlinux.org/yay-git.git
+	sudo chown -R "$user":"$user" yay-git
+	cd yay-git
+	makepkg -si --noconfirm
+}
+
+install_aur_packages() {
+	title
+	echo -ne "
+--------------------------------------------------------------------------------
+                            Installing AUR Packages
+--------------------------------------------------------------------------------
+
+"
+	yay -S --noconfirm --nodiffmenu --removemake lf cmst light jmtpfs authy \
+		aic94xx-firmware wd719x-firmware upd72020x-fw tremc vscodium-bin \
+		vscodium-bin-features vscodium-bin-marketplace
+	yes | yay -S --nodiffmenu libxft-bgra-git
+}
+
+get_appimage() {
+	title
+	echo -ne "
+--------------------------------------------------------------------------------
+                            Getting AppImages
+--------------------------------------------------------------------------------
+
+"
+	if [ ! -d ~/Downloads/AppImages ]; then
+		mkdir -p ~/Downloads/AppImages
+	fi
+	cd ~/Downloads/AppImages
+	curl -LO https://freaks.dev/android.AppImage
+	chmod +x android.AppImage
+	curl -LO https://github.com/Jigsaw-Code/outline-server/releases/download/v1.9.0/Outline-Manager.AppImage
+	chmod +x Outline-Manager.AppImage
+}
+
+enable_tap_to_click() {
+	title
+	echo -ne "
+--------------------------------------------------------------------------------
+                        Enabling Tap to Click
+--------------------------------------------------------------------------------
+
+"
+	[ ! -f /etc/X11/xorg.conf.d/40-libinput.conf ] && echo '
+Section "InputClass"
+    Identifier "libinput touchpad catchall"
+    MatchIsTouchpad "on"
+    MatchDevicePath "/dev/input/event*"
+    Driver "libinput"
+    # Enable left mouse button by tapping
+    Option "Tapping" "on"
+EndSection' | sudo tee /etc/X11/xorg.conf.d/40-libinput.conf
+}
+
+change_grub_theme() {
+	title
+	echo -ne "
+--------------------------------------------------------------------------------
+                        Changing Grub Theme
+--------------------------------------------------------------------------------
+
+"
+	sudo cp -r ~/.local/usr/share/grub-theme /usr/share/grub/themes/
+	echo "GRUB_THEME=/usr/share/grub/themes/grub-theme/theme.txt" | sudo tee -a /etc/default/grub
+	sudo grub-mkconfig -o /boot/grub/grub.cfg
+}
+
+install_dwm() {
+	title
+	echo -ne "
+--------------------------------------------------------------------------------
+                            Installing DWM
+--------------------------------------------------------------------------------
+
+"
+	cd ~/.local/src
+	git clone https://github.com/heinokesoe/dwm
+	cd dwm
+	sudo make clean install
+}
+
+install_dwmblocks() {
+	title
+	echo -ne "
+--------------------------------------------------------------------------------
+                            Installing Dwmblocks
+--------------------------------------------------------------------------------
+
+"
+	cd ~/.local/src
+	git clone https://github.com/heinokesoe/dwmblocks
+	cd dwmblocks
+	sudo make clean install
+}
+
+install_dmenu() {
+	title
+	echo -ne "
+--------------------------------------------------------------------------------
+                            Installing Dmenu
+--------------------------------------------------------------------------------
+
+"
+	cd ~/.local/src
+	git clone https://github.com/heinokesoe/dmenu
+	cd dmenu
+	sudo make clean install
+}
+
+install_st() {
+	title
+	echo -ne "
+--------------------------------------------------------------------------------
+                            Installing St
+--------------------------------------------------------------------------------
+
+"
+	cd ~/.local/src
+	git clone https://github.com/heinokesoe/st
+	cd st
+	sudo make clean install
+}
+
+install_qemu() {
+	title
+	echo -ne "
+--------------------------------------------------------------------------------
+                            Installing Qemu
+--------------------------------------------------------------------------------
+
+"
+	sudo pacman -S --noconfirm --needed --disable-download-timeout qemu virt-manager \
+		edk2-ovmf libvirt-runit vde2 dnsmasq openbsd-netcat
+	yes | sudo pacman -S ebtables
+	echo -e "unix_sock_group = \"libvirt\"" | sudo tee -a /etc/libvirt/libvirtd.conf
+	echo -e "unix_sock_rw_perms = \"0770\"" | sudo tee -a /etc/libvirt/libvirtd.conf
+	sudo usermod -aG libvirt "$user"
+	sudo ln -s /etc/runit/sv/libvirtd /etc/runit/runsvdir/default
+	sudo ln -s /etc/runit/sv/virtlockd /etc/runit/runsvdir/default
+	sudo ln -s /etc/runit/sv/virtlogd /etc/runit/runsvdir/default
+}
+
+install_docker() {
+	title
+	echo -ne "
+--------------------------------------------------------------------------------
+                            Installing Docker
+--------------------------------------------------------------------------------
+
+"
+	sudo pacman -S --noconfirm --needed docker-runit docker-compose
+	sudo usermod -aG docker "$user"
+	sudo ln -s /etc/runit/sv/docker /etc/runit/runsvdir/default
+}
+
+install_transmission() {
+	title
+	echo -ne "
+--------------------------------------------------------------------------------
+                            Installing Transmission
+--------------------------------------------------------------------------------
+
+"
+	sudo pacman -S --noconfirm --needed transmission-runit
+	sudo usermod -aG transmission "$user"
+	sudo ln -s /etc/runit/sv/transmission-daemon /etc/runit/runsvdir/default
+}
+
+install_browsers() {
+	title
+	echo -ne "
+--------------------------------------------------------------------------------
+                            Installing Browsers
+--------------------------------------------------------------------------------
+
+"
+	sudo pacman -S --noconfirm --needed firefox opera
+}
+
+install_zsh() {
+	title
+	echo -ne "
+--------------------------------------------------------------------------------
+                            Installing Zsh
+--------------------------------------------------------------------------------
+
+"
+	sudo pacman -S --noconfirm --needed zsh
+	if [ ! -d ~/.cache/zsh ]; then
+		mkdir -p ~/.cache/zsh
+	fi
+	touch ~/.cache/zsh/history
+	yay -S --noconfirm --nodiffmenu zsh-fast-syntax-highlighting
+	sudo chsh -s /bin/zsh "$user"
+}
+
+install_xdm() {
+	title
+	echo -ne "
+--------------------------------------------------------------------------------
+                            Installing XDM
+--------------------------------------------------------------------------------
+
+"
+	mkdir ~/xdm
+	cd ~/xdm && curl -LO https://freaks.dev/xdm-setup.tar.xz
+	tar -xf xdm-setup.tar.xz
+	sudo ./install.sh
+	cd && sudo rm -r ~/xdm
+}
+
+install_rclone() {
+	title
+	echo -ne "
+--------------------------------------------------------------------------------
+                            Installing Rclone
+--------------------------------------------------------------------------------
+
+"
+	curl https://rclone.org/install.sh | sudo bash
+}
+
+install_rtl8822ce_driver() {
+	title
+	echo -ne "
+	--------------------------------------------------------------------------------
+	Installing RTL8822CE Driver
+	--------------------------------------------------------------------------------
+
+	"
+	git clone https://github.com/juanro49/rtl88x2ce-dkms.git
+	sudo cp rtl88x2ce-dkms/rtw88_blacklist.conf /etc/modprobe.d/rtw88_blacklist.conf
+	sudo mkdir /usr/src/rtl88x2ce-35403
+	sudo cp -Rv rtl88x2ce-dkms/* /usr/src/rtl88x2ce-35403/
+	sudo dkms add -m rtl88x2ce -v 35403
+	sudo dkms build -m rtl88x2ce -v 35403
+	sudo dkms install -m rtl88x2ce -v 35403
+	sudo modprobe rtl88x2ce
+}
+
+postinstall_clean() {
+	title
+	echo -ne "
+--------------------------------------------------------------------------------
+          Installation is done. You can now Reboot and Enjoy.
+--------------------------------------------------------------------------------
+
+"
+}
+
+place_dotfiles
+install_xorg
+install_prerequisites
+install_fonts_and_themes
+install_utilities
+install_yay
+install_aur_packages
+get_appimage
+enable_tap_to_click
+change_grub_theme
+install_dwm
+install_dwmblocks
+install_dmenu
+install_st
+install_qemu
+install_docker
+install_transmission
+install_browsers
+install_zsh
+install_xdm
+install_rclone
+install_rtl8822ce_driver
+postinstall_clean
+
+exit 0

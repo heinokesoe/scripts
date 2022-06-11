@@ -1,0 +1,202 @@
+#!/bin/bash
+
+if ! [[ $(id -u) = 0 ]]; then
+	echo "This script must be run as root!"
+	exit 1
+fi
+
+title() {
+	clear
+	echo -ne "
+################################################################################
+#                                                                              #
+#      This is Automated Docker Containers Setup Script for Selfhosting        #
+#                                                                              #
+#                                    By                                        #
+#                                                                              #
+#                               Hein Oke Soe                                   #
+#                                                                              #
+################################################################################
+
+"
+}
+
+prepare() {
+	echo -ne "
+################################################################################
+#                                                                              #
+#                         Preparing to start setup                             #
+#                                                                              #
+################################################################################
+
+"
+    git clone https://github.com/heinokesoe/selfhost-with-docker ~/selfhost-with-docker
+    if ! grep DOCKERDIR /etc/environment &>/dev/null ; then
+        echo -e "\nDOCKERDIR=$HOME/selfhost-with-docker" >> /etc/environment
+        echo -e "\nIP=$(curl -s ip.me)" >> /etc/environment
+    fi
+    source /etc/environment
+}
+
+continue_or_exit() {
+	echo "Do you want to go back to menu or exit?"
+	options=("Go back to menu" "Exit")
+	select_option $? 2 "${options[@]}"
+
+	case $? in
+	0) start_setup;;
+	1) exit;;
+	esac
+}
+
+setup() {
+    ${DOCKERDIR}/"$1"/run start
+    [[ $? -eq 0 ]] \
+    && echo -e "\n$1 has been successfully started.\n" \
+    || echo -e "\n$1 cannot be started as the errors occurred.\n"
+    continue_or_exit
+}
+
+select_option() {
+
+	# little helpers for terminal print control and key input
+	ESC=$( printf "\033")
+	cursor_blink_on()  { printf "%s[?25h" "$ESC"; }
+	cursor_blink_off() { printf "%s[?25l" "$ESC"; }
+	cursor_to()        { printf "%s[%s;%sH" "$ESC" "$1" "${2:-1}"; }
+	print_option()     { printf "%s   %s " "$2" "$1"; }
+	print_selected()   { printf "%s  %s[7m $1 %s[27m" "$2" "$ESC" "$ESC"; }
+	get_cursor_row()   { IFS=';' read -sdR -p $'\E[6n' ROW COL; echo "${ROW#*[}"; }
+	get_cursor_col()   { IFS=';' read -sdR -p $'\E[6n' ROW COL; echo "${COL#*[}"; }
+	key_input()         {
+		local key
+		IFS= read -rsn1 key 2>/dev/null >&2
+		if [[ $key = ""      ]]; then echo enter; fi
+		if [[ $key = $'\x20' ]]; then echo space; fi
+		if [[ $key = "k" ]]; then echo up; fi
+		if [[ $key = "j" ]]; then echo down; fi
+		if [[ $key = "h" ]]; then echo left; fi
+		if [[ $key = "l" ]]; then echo right; fi
+		if [[ $key = "a" ]]; then echo all; fi
+		if [[ $key = "n" ]]; then echo none; fi
+		if [[ $key = $'\x1b' ]]; then
+			read -rsn2 key
+			if [[ $key = [A || $key = k ]]; then echo up; fi
+			if [[ $key = [B || $key = j ]]; then echo down; fi
+			if [[ $key = [C || $key = l ]]; then echo right; fi
+			if [[ $key = [D || $key = h ]]; then echo left; fi
+		fi
+	}
+	print_options_multicol() {
+		# print options by overwriting the last lines
+		local curr_col=$1
+		local curr_row=$2
+		local curr_idx=0
+
+		local idx=0
+		local row=0
+		local col=0
+
+		curr_idx=$(( curr_col + curr_row * colmax ))
+
+		for option in "${options[@]}"; do
+
+			row=$(( idx / colmax ))
+			col=$(( idx - row * colmax ))
+
+			cursor_to $(( startrow + row + 1 )) $(( offset * col + 1 ))
+			if [[ $idx -eq $curr_idx ]]; then
+				print_selected "$option"
+			else
+				print_option "$option"
+			fi
+			((idx++))
+		done
+	}
+
+	# initially print empty new lines (scroll down if at bottom of screen)
+	for opt; do printf "\n"; done
+
+	# determine current screen position for overwriting the options
+	# local return_value=$1
+	local lastrow=$(get_cursor_row)
+	local lastcol=$(get_cursor_col)
+	local startrow=$(( lastrow - $# ))
+	# local startcol=1
+	# local lines=$( tput lines )
+	local cols=$(tput cols)
+	local colmax=$2
+	local offset=$(( cols / colmax ))
+
+	# local size=$4
+	shift 4
+
+	# ensure cursor and input echoing back on upon a ctrl+c during read -s
+	trap "cursor_blink_on; stty echo; printf '\n'; exit" 2
+	cursor_blink_off
+
+	local active_row=0
+	local active_col=0
+	while true; do
+		print_options_multicol $active_col $active_row
+		# user key control
+		case $(key_input) in
+
+			enter)  break;;
+
+			up)  (( active_row-- ));
+				if [[ "$active_row" -lt 0 ]]; then active_row=0; fi;;
+
+			down)  (( active_row++ ));
+				if [[ $(( ${#options[@]} % colmax )) -ne 0 ]]; then
+					if [[ "$active_row" -ge $(( ${#options[@]} / colmax )) ]]; then active_row=$(( ${#options[@]} / colmax )); fi
+				else
+					if [[ "$active_row" -ge $(( ${#options[@]} / colmax -1 )) ]]; then active_row=$(( ${#options[@]} / colmax -1 )); fi
+				fi;;
+
+			left)  (( active_col = active_col - 1 ));
+				if [[ "$active_col" -lt 0 ]]; then active_col=0; fi;;
+
+			right)  (( active_col = active_col + 1 ));
+				if [[ "$active_col" -ge "$colmax" ]]; then active_col=$(( colmax - 1 )) ; fi;;
+
+		esac
+	done
+
+	# cursor position back to normal
+	cursor_to "$lastrow"
+	printf "\n"
+	cursor_blink_on
+
+	return $(( active_col + active_row * colmax ))
+}
+
+start_setup() {
+	title
+	echo "Choose one to install: "
+	options=("Certbot" "Coturn" "Dozzle" "Filebrowser" "Gitea" "Gollum" "Ipsecvpn" "KMS" "Mirotalk" "Nginx" "Rustpad" "Rwtxt" "Screego" "Exit")
+	select_option $? 3 "${options[@]}"
+
+	case $? in
+	0) setup certbot;;
+	1) setup coturn;;
+	2) setup dozzle;;
+	3) setup filebrowser;;
+	4) setup gitea;;
+	5) setup gollum;;
+	6) setup ipsecvpn;;
+	7) setup kms;;
+	8) setup mirotalk;;
+	9) setup nginx;;
+	10) setup rustpad;;
+	11) setup rwtxt;;
+	12) setup screego;;
+	13) exit;;
+	esac
+}
+
+title
+prepare
+start_setup
+
+exit 0
