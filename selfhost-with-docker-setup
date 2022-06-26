@@ -174,7 +174,7 @@ select_option() {
 start_setup() {
 	title
 	echo "Choose one to install: "
-	options=("Certbot" "Coturn" "Dozzle" "Filebrowser" "Gitea" "Gollum" "Ipsecvpn" "KMS" "Mirotalk" "Nginx" "Rustpad" "Rwtxt" "Screego" "Exit")
+	options=("Certbot" "Coturn" "Dozzle" "Filebrowser" "Gitea" "Gollum" "Ipsecvpn" "KMS" "Mirotalk" "Nginx" "Rustdesk" "Rustpad" "Rwtxt" "Screego" "Exit")
 	select_option $? 3 "${options[@]}"
 
 	case $? in
@@ -188,10 +188,11 @@ start_setup() {
 	7) setup kms;;
 	8) setup mirotalk;;
 	9) setup nginx;;
-	10) setup rustpad;;
-	11) setup rwtxt;;
-	12) setup screego;;
-	13) exit;;
+    10) setup rustdesk;;
+	11) setup rustpad;;
+	12) setup rwtxt;;
+	13) setup screego;;
+	14) exit;;
 	esac
 }
 
