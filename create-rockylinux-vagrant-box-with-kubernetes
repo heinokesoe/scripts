@@ -1,0 +1,121 @@
+#!/bin/bash
+# This script is for creating rockylinux vagrant box with kubernetes from clean installed rockylinux server with vagrant user.
+
+if ! [[ $(id -u) = 0 ]]; then
+	echo "This script must be run as root!"
+	exit 1
+fi
+
+echo "install sshpass"
+dnf install sshpass -y
+
+echo "disable firewall"
+systemctl disable --now firewalld
+
+echo "disable selinux"
+setenforce 0
+sed -i --follow-symlinks 's/^SELINUX=enforcing/SELINUX=disabled/' /etc/sysconfig/selinux
+
+echo "set hostname"
+hostnamectl set-hostname rockylinux
+
+echo "configure ssh"
+echo -e "PubkeyAuthentication yes\nUseDNS no" >> /etc/ssh/sshd_config
+systemctl restart sshd
+mkdir /home/vagrant/.ssh
+echo "ssh-rsa AAAAB3NzaC1yc2EAAAABIwAAAQEA6NF8iallvQVp22WDkTkyrtvp9eWW6A8YVr+kz4TjGYe7gHzIw+niNltGEFHzD8+v1I2YJ6oXevct1YeS0o9HZyN1Q9qgCgzUFtdOKLv6IedplqoPkcmF0aYet2PkEDo3MlTBckFXPITAMzF8dJSIFo9D8HfdOV0IAdx4O7PtixWKn5y2hMNG0zQPyUecp4pzC6kivAIhyfHilFR61RGL+GPXQ2MWZWFYbAGjyiYJnAmCP3NOTd0jMZEnDkbUvxhMmBYSdETk1rRgm+R4LOzFUGaHqHDLKLX+FIPKcF96hrucXzcWyLbIbEgE98OHlnVYCzRdK8jlqm8tehUc9c9WhQ== vagrant insecure public key" > /home/vagrant/.ssh/authorized_keys
+chown -R vagrant:vagrant /home/vagrant/.ssh
+chmod 0700 /home/vagrant/.ssh
+chmod 0600 /home/vagrant/.ssh/authorized_keys
+
+echo "configure sudoers"
+echo "vagrant ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+
+echo "reduce the grub menu time to 1 second"
+sed -i -e 's/^GRUB_TIMEOUT=[0-9]\+$/GRUB_TIMEOUT=1/' /etc/default/grub
+grub2-mkconfig -o /boot/grub2/grub.cfg
+
+echo "configure network"
+rm -f /etc/sysconfig/network-scripts/ifcfg-e*
+cat <<EOF > /etc/sysconfig/network-scripts/ifcfg-eth0
+TYPE=Ethernet
+PROXY_METHOD=none
+BROWSER_ONLY=no
+BOOTPROTO=dhcp
+DEFROUTE=yes
+IPV4_FAILURE_FATAL=no
+IPV6INIT=yes
+IPV6_AUTOCONF=yes
+IPV6_DEFROUTE=yes
+IPV6_FAILURE_FATAL=no
+IPV6_ADDR_GEN_MODE=stable-privacy
+NAME=eth0
+DEVICE=eth0
+ONBOOT=yes
+EOF
+sed -i 's/GRUB_CMDLINE_LINUX="\(.*\)"/GRUB_CMDLINE_LINUX="net.ifnames=0 biosdevname=0"/g' /etc/default/grub
+grub2-mkconfig -o /boot/grub2/grub.cfg
+
+echo "enable and load kernel modules for containerd"
+cat <<EOF >> /etc/modules-load.d/containerd.conf
+overlay
+br_netfilter
+EOF
+modprobe overlay
+modprobe br_netfilter
+
+echo "add kernel settings for kubernetes"
+cat <<EOF >> /etc/sysctl.d/kubernetes.conf
+net.bridge.bridge-nf-call-ip6tables = 1
+net.bridge.bridge-nf-call-iptables  = 1
+net.ipv4.ip_forward                 = 1
+EOF
+sysctl --system
+
+echo "install containerd"
+dnf config-manager --add-repo=https://download.docker.com/linux/centos/docker-ce.repo
+dnf install containerd.io -y
+mkdir /etc/containerd
+containerd config default > /etc/containerd/config.toml
+sed -i 's/SystemdCgroup \= false/SystemdCgroup \= true/g' /etc/containerd/config.toml
+systemctl restart containerd
+systemctl enable containerd
+
+echo "install kubernetes"
+cat <<EOF > /etc/yum.repos.d/kubernetes.repo
+[kubernetes]
+name=Kubernetes
+baseurl=https://packages.cloud.google.com/yum/repos/kubernetes-el7-x86_64
+enabled=1
+gpgcheck=1
+repo_gpgcheck=1
+gpgkey=https://packages.cloud.google.com/yum/doc/yum-key.gpg https://packages.cloud.google.com/yum/doc/rpm-package-key.gpg
+exclude=kubelet kubeadm kubectl
+EOF
+dnf install kubelet-1.24.0-0 kubeadm-1.24.0-0 kubectl-1.24.0-0 -y --disableexcludes=kubernetes
+systemctl enable kubelet
+
+echo "Removing extra firmware packages"
+dnf remove linux-firmware -y
+
+echo "clean dnf cache"
+dnf clean all
+
+echo "truncate any logs that have built up during the install"
+find /var/log -type f -exec truncate --size=0 {} \;
+
+echo "remove the install log"
+rm -f /root/anaconda-ks.cfg /root/original-ks.cfg
+
+echo "remove the contents of /tmp and /var/tmp"
+rm -rf /tmp/* /var/tmp/*
+
+echo "Force a new random seed to be generated"
+rm -f /var/lib/systemd/random-seed
+
+echo "Wipe netplan machine-id (DUID) so machines get unique ID generated on boot"
+truncate -s 0 /etc/machine-id
+
+echo "Clear the history so our install commands aren't there"
+rm -f /root/.wget-hsts
+export HISTSIZE=0
