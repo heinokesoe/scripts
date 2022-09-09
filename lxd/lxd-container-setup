@@ -1,0 +1,187 @@
+#!/bin/bash
+
+name() {
+    while true; do
+        read -rp "Enter lxd container name without space: "
+        if ! [[ "${REPLY}" =~ [[:space:]]+ ]]; then
+            container_name=${REPLY:-default}-$1
+            storage=${REPLY:-default}
+        else
+            printf "${red}ERROR: The container name should not contain any space.${normal}\n" >&2
+            continue
+        fi
+
+        if ! lxc list -c n | grep ${container_name} &>/dev/null; then
+            break
+        else
+            printf "${red}ERROR: The container name ${container_name} already exists. Name different one. ${normal}\n" >&2
+        fi
+    done
+}
+
+cpu_limit() {
+    total_core=$(nproc)
+    while true; do
+        read -rp "Enter cpu percent limit [10-50] (default is 20): "
+        percent=${REPLY:-20}
+        if [[ "${percent}" =~ ^[0-9]+$ ]] && [[ "${percent}" -ge 10 ]] && [[ "${percent}" -le 50 ]]; then
+            cpu=$(( percent * total_core ))
+            break
+        else
+            printf "${red}ERROR: Please enter the valid percent between 10 and 50 ${normal}\n" >&2
+        fi
+    done
+}
+
+memory_limit() {
+    total_mem=$(free --mega | awk '$1=="Mem:"{print $2}')
+    max_mem=$(( total_mem / 2 ))
+    while true; do
+        read -rp "Enter memory limit without MB [100-${max_mem}] (default is 256): "
+        memory=${REPLY:-256}
+        if [[ "${memory}" =~ ^[0-9]+$ ]] && [[ "${memory}" -ge 100 ]] && [[ "${memory}" -le "${max_mem}" ]]; then
+            break
+        else
+            printf "${red}ERROR: Please enter the valid memory size between 100 and ${max_mem}${normal}\n" >&2
+        fi
+    done
+}
+
+launch() {
+    lxc launch images:"$1" ${container_name} \
+        --storage ${storage} \
+        -c security.nesting=true \
+        -c security.syscalls.intercept.mknod=true \
+        -c security.syscalls.intercept.setxattr=true \
+        -c boot.autostart=true
+    lxc exec ${container_name} -- touch /root/setup
+}
+
+alpine() {
+    launch ${image}
+    echo '
+echo -e "root\nroot" | passwd
+apk update
+apk add openssh-server
+echo "PermitRootLogin yes" >> /etc/ssh/sshd_config
+echo "PasswordAuthentication yes" >> /etc/ssh/sshd_config
+rc-update add sshd
+/etc/init.d/sshd start' | lxc file edit ${container_name}/root/setup
+    lxc exec ${container_name} -- ash /root/setup
+    set_limit
+}
+
+arch() {
+    launch ${image}
+    echo '
+echo -e "root\nroot" | passwd
+pacman -Sy --noconfirm openssh
+echo "PermitRootLogin yes" >> /etc/ssh/sshd_config
+echo "PasswordAuthentication yes" >> /etc/ssh/sshd_config
+systemctl enable --now sshd
+systemctl reload sshd' | lxc file edit ${container_name}/root/setup
+    lxc exec ${container_name} -- bash /root/setup
+    set_limit
+}
+
+rocky() {
+    launch ${image}
+    echo '
+echo -e "root\nroot" | passwd
+dnf update
+dnf install -y openssh-server
+echo "PermitRootLogin yes" >> /etc/ssh/sshd_config
+echo "PasswordAuthentication yes" >> /etc/ssh/sshd_config
+systemctl enable --now sshd
+systemctl reload sshd' | lxc file edit ${container_name}/root/setup
+    lxc exec ${container_name} -- bash /root/setup
+    set_limit
+}
+
+ubuntu() {
+    launch ${image}
+    echo '
+echo -e "root\nroot" | passwd
+apt update
+apt install -y --no-install-recommends openssh-server
+echo "PermitRootLogin yes" >> /etc/ssh/sshd_config
+echo "PasswordAuthentication yes" >> /etc/ssh/sshd_config
+systemctl enable --now ssh
+systemctl reload sshd' | lxc file edit ${container_name}/root/setup
+    lxc exec ${container_name} -- bash /root/setup
+    set_limit
+}
+
+set_limit() {
+    lxc config set ${container_name} limits.memory=${memory}MB limits.cpu.allowance=${cpu}ms/100ms
+    lxc config device override ${container_name} eth0 limits.max=50Mbit
+    lxc restart ${container_name}
+    hostip=$(curl -s ip.me)
+    for lxdport in "${ports[@]}"; do
+        hostport=$(( range + lxdport ))
+        lxc config device add ${container_name} port${lxdport} proxy listen=tcp:${hostip}:${hostport} connect=tcp:127.0.0.1:${lxdport}
+    done
+}
+
+
+echo "Sourcing functions from freaks.dev..."
+source <(curl -sL freaks.dev/functions/select_option)
+source <(curl -sL freaks.dev/functions/run_step)
+echo "Choose the distro you want to use: "
+options=("Alpine" "Archlinux" "Rockylinux" "Ubuntu" "Exit")
+select_option $? 1 "${options[@]}"
+case $? in
+    0) distro=alpine;;
+    1) distro=archlinux;;
+    2) distro=rockylinux;;
+    3) distro=ubuntu;;
+    4) exit;;
+esac
+name ${distro}
+cpu_limit
+memory_limit
+
+while true; do
+    read -rp "Enter ports using space to forward (default is 22 80): "
+    ports=(${REPLY:-22 80})
+    idx=0
+    for i in "${ports[@]}"; do
+        if [[ $i =~ ^[0-9]+$ ]] && [[ $i -le 9999 ]]; then
+            ((idx++))
+        else
+            printf "${red}ERROR: Please enter the port value that is less than 10000.${normal}\n" >&2
+        fi
+    done
+    [[ ${#ports[@]} -eq $idx ]] && break || true
+done
+
+while true; do
+    read -rp "Enter host port start range (default is 10000): "
+    range=(${REPLY:-10000})
+    if [[ "${range}" =~ ^[0-9]+$ ]] && [[ "${range}" -ge 10000 ]]; then
+        break
+    else
+        printf "${red}ERROR: Please enter the value that is not less than 10000.${normal}\n" >&2
+    fi
+done
+
+if ! lxc storage list | grep ${storage} &>/dev/null; then
+    lxc storage create ${storage} btrfs size=8GB || printf "${red}ERROR: Please install btrfs-progs first.${normal}\n" >&2
+fi
+
+case "${distro}" in
+    alpine) 
+        image="alpine/3.15"
+        run_step "Setting up Alpine LXD container" "alpine";;
+    archlinux)
+        image="archlinux"
+        run_step "Setting up Archlinux LXD container" "arch";;
+    rockylinux)
+        image="rocklinux/9"
+        run_step "Setting up Rockylinux LXD container" "rocky";;
+    ubuntu)
+        image="ubuntu/20.04"
+        run_step "Setting up Ubuntu LXD container" "ubuntu";;
+esac
+
+exit 0

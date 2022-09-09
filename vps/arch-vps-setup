@@ -1,0 +1,127 @@
+#!/bin/bash
+
+if ! [[ $(id -u) = 0 ]]; then
+    echo "This script must be run as root!"
+    exit 1
+fi
+
+title() {
+    clear
+    echo -ne "
+################################################################################
+#                                                                              #
+#              This is Automated Arch Linux Server Setup Script                #
+#                                                                              #
+#                                    By                                        #
+#                                                                              #
+#                               Hein Oke Soe                                   #
+#                                                                              #
+################################################################################
+
+"
+}
+
+install_prerequisites() {
+    log "$1"
+    pacman -S --noconfirm --needed curl wget unzip bash-completion openssh htop nano polkit
+    echo "PubkeyAuthentication yes" >> /etc/ssh/sshd_config
+    systemctl enable --now sshd
+}
+
+create_user() {
+    echo "Creating a normal user"
+    read -rp "Enter username: " username
+    read -srp "Enter password for $username: " user_password
+    {
+        useradd -s /bin/bash -m $username
+        echo "$username:$user_password" | chpasswd
+        echo "$username ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+        mkdir -p /home/$username/.ssh
+        echo "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDZRkYUO76zjAOtr777ehPHEusOMwfb1QAr8MfnkyAYgRh6FRC6rz2meIuglCCb6KxCL0h0x1FPmUzE5rnKUjAvhYPKltrnSsSyaiOYMC4NDDjkg1I8DZKf03F1Qxdnb6iqS5dsMja/PLIMRiYDAaFTRds76XaAcfF2+m4Tgm5pF68H2ZXYSCBkEx9AxVDkf3MUkI08QGDrfsoVPfNHZC5vhICF4tQFjhYsy7p/2cbHcdP0uo42ERS357Lv3sG5oy3Ppn4YC2dUurzna+wEny//NH1PzN1xYL+hZUTxotzeyjXz2qDP7idfe64WX7tKVa0WZe6bhmcybYuXv3qtNiXN vps" >> /home/$username/.ssh/authorized_keys
+        chmod 0700 /home/$username/.ssh
+        chmod 0600 /home/$username/.ssh/authorized_keys
+        chown -R $username:$username /home/$username/.ssh
+    } &> /dev/null
+}
+
+install_lxd() {
+    log "$1"
+    yes | pacman -S --needed lxd btrfs-progs apparmor
+    systemctl enable lxd apparmor
+    sed -i 's/GRUB_CMDLINE_LINUX="\(.*\)"/GRUB_CMDLINE_LINUX="apparmor=1 lsm=landlock,lockdown,yama,integrity,apparmor,bpf"/g' /etc/default/grub
+    grub-mkconfig -o /boot/grub/grub.cfg
+    echo "root:1000000:65536" | tee -a /etc/subuid /etc/subgid
+    echo '
+lxc.idmap = u 0 1000000 65536
+lxc.idmap = g 0 1000000 65536
+' | tee -a /etc/lxc/default.conf
+    usermod -aG lxd $username
+}
+
+install_podman() {
+    log "$1"
+    pacman -S --noconfirm --needed podman aardvark-dns podman-compose
+    rm /usr/bin/podman-compose
+    mkdir -p /home/$username/.local/bin
+    curl -so /home/$username/.local/bin/podman-compose https://raw.githubusercontent.com/containers/podman-compose/devel/podman_compose.py
+    chmod +x /home/$username/.local/bin/podman-compose
+    chown -R $username:$username /home/$username/.local
+    echo "export PATH=$PATH:/home/$username/.local/bin" >> /home/$username/.bashrc
+    echo "net.ipv4.ip_unprivileged_port_start=80" >> /etc/sysctl.d/unprivileged_port.conf
+    sysctl --system
+    loginctl enable-linger $username
+    echo "$username:100000:65536" | tee -a /etc/subuid /etc/subgid
+    chmod u+s /usr/bin/newuidmap /usr/bin/newgidmap
+    echo "
+# /etc/systemd/user/podman-compose@.service
+
+[Unit]
+Description=%i rootless pod (podman-compose)
+
+[Service]
+Type=simple
+EnvironmentFile=%h/.config/containers/compose/projects/%i.env
+ExecStart=%h/.local/bin/podman-compose up
+ExecStop=%h/.local/bin/podman-compose down -t 0
+
+[Install]
+WantedBy=default.target" > /etc/xdg/systemd/user/podman-compose@.service
+}
+
+install_rclone() {
+    log "$1"
+    curl https://rclone.org/install.sh | bash
+}
+
+install_wireguard() {
+    log "$1"
+    curl -so /home/$username/wireguard-install.sh https://raw.githubusercontent.com/heinokesoe/wireguard-install/master/wireguard-install.sh
+    bash /home/$username/wireguard-install.sh --auto
+}
+
+start_install() {
+    echo -e "\nChoose what you want to install: "
+    programs=("LXD" "Podman" "Rclone" "Wireguard")
+    multi_select_option results 1 programs
+    if ! echo ${results[@]} | grep true &>/dev/null; then
+        echo -e "Nothing is selected. So exited.\n"
+        exit
+    fi
+    idx=0
+    for program in "${programs[@]}"; do
+        if [[ "${results[idx]}" == "true" ]]; then
+            run_step "Installing $program" "install_${program,,}"
+        fi
+        ((idx++))
+    done
+}
+
+title
+echo "Sourcing functions from freaks.dev..."
+source <(curl -sL freaks.dev/functions/run_step)
+source <(curl -sL freaks.dev/functions/multi_select_option)
+run_step "Installing Prerequisites" "install_prerequisites"
+create_user
+start_install
+
+exit 0

@@ -1,0 +1,27 @@
+#!/bin/sh
+
+# Example:
+
+# . <(curl -sL freaks.dev/scripts/posix_spin)
+# printf "Hacking NASA    "
+# spin &
+# spinpid=$!
+# trap 'kill $spinpid' SIGTERM SIGKILL
+# {
+#     # You can run all the command you want here. I will run only sleep command.
+#     sleep 5
+# } &>/dev/null
+# kill $spinpid
+# printf "\b \t[Done]\n"
+# printf "NASA has been successfully hacked!!!\n"
+
+spin() {
+    sp="/-\|"
+    printf " "
+    sleep 0.2
+    while true; do
+        printf "\b%.1s" "$sp"
+        sp=${sp#?}${sp%???}
+        sleep 0.2
+    done
+}

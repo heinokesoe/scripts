@@ -1,0 +1,112 @@
+#!/bin/bash
+
+if ! [[ $(id -u) = 0 ]]; then
+    echo "This script must be run as root!"
+    exit 1
+fi
+
+title() {
+    clear
+    echo -ne "
+################################################################################
+#                                                                              #
+#                This is Automated Ubuntu Server Setup Script                  #
+#                                                                              #
+#                                    By                                        #
+#                                                                              #
+#                               Hein Oke Soe                                   #
+#                                                                              #
+################################################################################
+
+"
+}
+
+install_prerequisites() {
+    log "$1"
+    apt update
+    apt install -y --no-install-recommends curl wget apt-transport-https \
+        ca-certificates software-properties-common unzip gnupg
+}
+
+create_user() {
+    echo "Creating a normal user"
+    read -rp "Enter username: " username
+    read -srp "Enter password for $username: " user_password
+    {
+        useradd -s /bin/bash -m $username
+        echo "$username:$user_password" | chpasswd
+        echo "$username ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+        mkdir -p /home/$username/.ssh
+        echo "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDZRkYUO76zjAOtr777ehPHEusOMwfb1QAr8MfnkyAYgRh6FRC6rz2meIuglCCb6KxCL0h0x1FPmUzE5rnKUjAvhYPKltrnSsSyaiOYMC4NDDjkg1I8DZKf03F1Qxdnb6iqS5dsMja/PLIMRiYDAaFTRds76XaAcfF2+m4Tgm5pF68H2ZXYSCBkEx9AxVDkf3MUkI08QGDrfsoVPfNHZC5vhICF4tQFjhYsy7p/2cbHcdP0uo42ERS357Lv3sG5oy3Ppn4YC2dUurzna+wEny//NH1PzN1xYL+hZUTxotzeyjXz2qDP7idfe64WX7tKVa0WZe6bhmcybYuXv3qtNiXN vps" >> /home/$username/.ssh/authorized_keys
+        chmod 0700 /home/$username/.ssh
+        chmod 0600 /home/$username/.ssh/authorized_keys
+        chown -R $username:$username /home/$username/.ssh
+    } &> /dev/null
+}
+
+install_docker() {
+    log "$1"
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | apt-key --keyring /etc/apt/trusted.gpg.d/docker.gpg add -
+    echo "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list
+    apt update
+    apt install -y docker-ce docker-compose
+    usermod -aG docker $username
+}
+
+install_rclone() {
+    log "$1"
+    curl https://rclone.org/install.sh | bash
+}
+
+install_wireguard() {
+    log "$1"
+    curl -so /home/$username/wireguard-install.sh https://raw.githubusercontent.com/heinokesoe/wireguard-install/master/wireguard-install.sh
+    bash /home/$username/wireguard-install.sh --auto
+}
+
+install_dwm() {
+    log "$1"
+    apt install dwm suckless-tools stterm xorg -y --no-install-recommends
+}
+
+install_brave() {
+    log "$1"
+    curl -fsSLo /usr/share/keyrings/brave-browser-archive-keyring.gpg https://brave-browser-apt-release.s3.brave.com/brave-browser-archive-keyring.gpg
+    echo "deb [signed-by=/usr/share/keyrings/brave-browser-archive-keyring.gpg arch=amd64] https://brave-browser-apt-release.s3.brave.com/ stable main"| tee /etc/apt/sources.list.d/brave-browser-release.list
+    apt update
+    apt install brave-browser -y
+}
+
+install_xrdp() {
+    log "$1"
+    apt install xrdp -y
+    sed -i 's/^port=3389/port=tcp:\/\/.:3389/' /etc/xrdp/xrdp.ini
+    systemctl restart xrdp
+}
+
+start_install() {
+    echo -e "\nChoose what you want to install: "
+    programs=("Docker" "Rclone" "Wireguard" "DWM" "Brave" "Xrdp")
+    multi_select_option results 1 programs
+    if ! echo ${results[@]} | grep true &>/dev/null; then
+        echo -e "Nothing is selected. So exited.\n"
+        exit
+    fi
+    idx=0
+    for program in "${programs[@]}"; do
+        if [[ "${results[idx]}" == "true" ]]; then
+            run_step "Installing $program" "install_${program,,}"
+        fi
+        ((idx++))
+    done
+}
+
+title
+echo "Sourcing functions from freaks.dev..."
+source <(curl -sL freaks.dev/functions/run_step)
+source <(curl -sL freaks.dev/functions/multi_select_option)
+run_step "Installing Prerequisites" "install_prerequisites"
+create_user
+start_install
+
+exit 0

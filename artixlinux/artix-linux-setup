@@ -1,0 +1,261 @@
+#!/bin/bash
+
+if [[ $(id -u) = 0 ]]; then
+    echo "This script must not be run as root!"
+    exit 1
+fi
+
+export user=$(whoami)
+
+title() {
+    clear
+    echo -ne "
+################################################################################
+#                                                                              #
+#    This is Automated Artix Linux Setup Script to install everything I use    #
+#                                                                              #
+#                                    By                                        #
+#                                                                              #
+#                               Hein Oke Soe                                   #
+#                                                                              #
+################################################################################
+
+"
+}
+
+place_dotfiles() {
+    log "$1"
+    sudo pacman -S --noconfirm git
+    git clone https://github.com/heinokesoe/dotfiles
+    shopt -s dotglob
+    mv dotfiles/* ~
+    sudo rm -r .git README.md dotfiles
+    ln -s ~/.local/share/wallpaper.jpg ~/.local/share/bg
+}
+
+install_xorg() {
+    log "$1"
+    sudo pacman -S --noconfirm --needed --disable-download-timeout xorg \
+        xorg-xinit xorg-xprop xclip xdotool xcompmgr
+}
+
+install_prerequisites() {
+    log "$1"
+    sudo pacman -S --noconfirm --needed --disable-download-timeout libx11 \
+        libxft libxinerama freetype2 fontconfig go bc
+}
+
+install_fonts_and_themes() {
+    log "$1"
+    sudo pacman -S --noconfirm --needed --disable-download-timeout lxappearance \
+        qt5ct artix-dark-theme noto-fonts noto-fonts-cjk noto-fonts-emoji
+}
+
+install_utilities() {
+    log "$1"
+    sudo pacman -S --noconfirm --needed --disable-download-timeout dosfstools \
+        xwallpaper ffmpeg neovim mpv man-db remmina ibus bat htop exa p7zip \
+        ntfs-3g pulseaudio-alsa pulsemixer pamixer maim unrar unzip zathura \
+        zathura-pdf-mupdf poppler mediainfo fzf highlight slock moreutils \
+        gnome-disk-utility linux-lts-headers wireguard-runit exfat-utils \
+        libnotify sxiv dunst bmon gparted freerdp net-tools scrcpy \
+        openresolv usbutils dkms
+}
+
+install_yay() {
+    log "$1"
+    sudo git clone https://aur.archlinux.org/yay-git.git /opt/yay-git
+    sudo chown -R "${user}":"${user}" /opt/yay-git
+    cd /opt/yay-git
+    makepkg -si --noconfirm
+    cd
+}
+
+install_aur_packages() {
+    log "$1"
+    yay -S --noconfirm --nodiffmenu --removemake lf cmst light jmtpfs authy \
+        aic94xx-firmware wd719x-firmware upd72020x-fw tremc vscodium-bin \
+        vscodium-bin-features vscodium-bin-marketplace
+    yes | yay -S --nodiffmenu libxft-git
+}
+
+get_appimage() {
+    log "$1"
+    [[ ! -d ~/Downloads/AppImages ]] && mkdir -p ~/Downloads/AppImages || true
+    curl -o ~/Downloads/AppImages/android.AppImage https://freaks.dev/android.AppImage
+    curl -o ~/Downloads/AppImages/Outline-Manager.AppImage https://github.com/Jigsaw-Code/outline-server/releases/download/v1.9.0/Outline-Manager.AppImage
+    chmod +x ~/Downloads/AppImages/*
+}
+
+enable_tap_to_click() {
+    log "$1"
+    [ ! -f /etc/X11/xorg.conf.d/40-libinput.conf ] && echo '
+Section "InputClass"
+    Identifier "libinput touchpad catchall"
+    MatchIsTouchpad "on"
+    MatchDevicePath "/dev/input/event*"
+    Driver "libinput"
+    # Enable left mouse button by tapping
+    Option "Tapping" "on"
+EndSection' | sudo tee /etc/X11/xorg.conf.d/40-libinput.conf
+}
+
+set_charge_threshold_limit() {
+    log "$1"
+    echo 80 | sudo tee /sys/class/power_supply/BAT0/charge_control_start_threshold
+    echo 90 | sudo tee /sys/class/power_supply/BAT0/charge_control_end_threshold
+}
+
+disable_beep_sound() {
+    log "$1"
+    rmmod pcspkr || true
+    echo "blacklist pcspkr" | sudo tee /etc/modprobe.d/nobeep.conf
+}
+
+change_grub_theme() {
+    log "$1"
+    sudo cp -r ~/.local/usr/share/grub-theme /usr/share/grub/themes/
+    echo "GRUB_THEME=/usr/share/grub/themes/grub-theme/theme.txt" | sudo tee -a /etc/default/grub
+    sudo grub-mkconfig -o /boot/grub/grub.cfg
+}
+
+install_dwm() {
+    log "$1"
+    git clone https://github.com/heinokesoe/dwm ~/.local/src/dwm
+    cd ~/.local/src/dwm
+    sudo make clean install
+}
+
+install_dwmblocks() {
+    log "$1"
+    git clone https://github.com/heinokesoe/dwmblocks ~/.local/src/dwmblocks
+    cd ~/.local/src/dwmblocks
+    sudo make clean install
+}
+
+install_dmenu() {
+    log "$1"
+    git clone https://github.com/heinokesoe/dmenu ~/.local/src/dmenu
+    cd ~/.local/src/dmenu
+    sudo make clean install
+}
+
+install_st() {
+    log "$1"
+    git clone https://github.com/heinokesoe/st ~/.local/src/st
+    cd ~/.local/src/st
+    sudo make clean install
+}
+
+install_qemu() {
+    log "$1"
+    sudo pacman -S --noconfirm --needed --disable-download-timeout qemu virt-manager \
+        edk2-ovmf libvirt-runit vde2 dnsmasq openbsd-netcat
+    yes | sudo pacman -S ebtables
+    echo -e "unix_sock_group = \"libvirt\"" | sudo tee -a /etc/libvirt/libvirtd.conf
+    echo -e "unix_sock_rw_perms = \"0770\"" | sudo tee -a /etc/libvirt/libvirtd.conf
+    sudo usermod -aG libvirt "${user}"
+    sudo ln -s /etc/runit/sv/libvirtd /etc/runit/runsvdir/default
+    sudo ln -s /etc/runit/sv/virtlockd /etc/runit/runsvdir/default
+    sudo ln -s /etc/runit/sv/virtlogd /etc/runit/runsvdir/default
+}
+
+install_transmission() {
+    log "$1"
+    sudo pacman -S --noconfirm --needed transmission-runit
+    sudo usermod -aG transmission "${user}"
+    sudo ln -s /etc/runit/sv/transmission-daemon /etc/runit/runsvdir/default
+}
+
+install_browser() {
+    log "$1"
+    sudo pacman -S --noconfirm --needed firefox
+}
+
+install_zsh() {
+    log "$1"
+    sudo pacman -S --noconfirm --needed zsh
+    [[ ! -d ~/.cache/zsh ]] && mkdir -p ~/.cache/zsh || true
+    touch ~/.cache/zsh/history
+    yay -S --noconfirm --nodiffmenu zsh-fast-syntax-highlighting
+    sudo chsh -s /bin/zsh "${user}"
+}
+
+install_xdm() {
+    log "$1"
+    mkdir /tmp/xdm
+    curl -o /tmp/xdm/xdm-setup.tar.xz https://freaks.dev/xdm-setup.tar.xz
+    tar -xf /tmp/xdm/xdm-setup.tar.xz -C /tmp/xdm/
+    sudo /tmp/xdm/install.sh
+    rm -r /tmp/xdm
+}
+
+install_rclone() {
+    log "$1"
+    curl https://rclone.org/install.sh | sudo bash
+}
+
+install_podman() {
+    log "$1"
+    sudo pacman -S --noconfirm --needed podman netavark aardvark-dns python-pyaml python-dotenv
+    curl -so ~/.local/bin/podman-compose https://raw.githubusercontent.com/containers/podman-compose/devel/podman_compose.py
+    chmod +x ~/.local/bin/podman-compose
+    sudo chmod u+s /usr/bin/newuidmap /usr/bin/newgidmap
+    echo "${user}:100000:65536" | sudo tee -a /etc/subuid /etc/subgid
+    echo '
+mount --make-shared /
+echo "+cpuset +cpu +io +memory +hugetlb +pids +rdma +misc" > /sys/fs/cgroup/cgroup.subtree_control
+' | sudo tee -a /etc/rc.local
+    sudo mount --make-shared /
+    echo "+cpuset +cpu +io +memory +hugetlb +pids +rdma +misc" | sudo tee /sys/fs/cgroup/cgroup.subtree_control
+}
+
+install_lxd() {
+    log "$1"
+    sudo pacman -S --noconfirm --needed lxd-runit
+    sudo mv ~/.local/sv/lx* /etc/runit/sv/
+    sudo chown -R root:root /etc/runit/sv/lxd /etc/runit/sv/lxcfs
+    echo "root:1000000:65536" | sudo tee -a /etc/subuid /etc/subgid
+    echo '
+lxc.idmap = u 0 1000000 65536
+lxc.idmap = g 0 1000000 65536
+' | sudo tee -a /etc/lxc/default.conf
+    sudo usermod -aG lxd ${user}
+    sudo ln -s /etc/runit/sv/lxd /etc/runit/runsvdir/default
+    sudo ln -s /etc/runit/sv/lxcfs /etc/runit/runsvdir/default
+}
+
+finish() {
+    echo -e "\n\nThe script has been run successfully.\nLogout first and start GUI with 'startx' command after logging in.\nFull log can be found at ${setup_log}\n"
+}
+
+title
+echo "Sourcing functions from freaks.dev..."
+source <(curl -sL freaks.dev/functions/run_step)
+run_step "Placing Dotfiles" "place_dotfiles"
+run_step "Installing Xorg Packages" "install_xorg"
+run_step "Installing Prerequisites" "install_prerequisites"
+run_step "Installing Fonts and Themes" "install_fonts_and_themes"
+run_step "Installing Utilities" "install_utilities"
+run_step "Installing Yay" "install_yay"
+run_step "Installing AUR Packages" "install_aur_packages"
+run_step "Getting AppImages" "get_appimage"
+run_step "Enabling Tap to Click" "enable_tap_to_click"
+run_step "Setting Charge Threshold Limit" "set_charge_threshold_limit"
+run_step "Disabling beep sound" "disable_beep_sound"
+run_step "Changing Grub Theme" "change_grub_theme"
+run_step "Installing DWM" "install_dwm"
+run_step "Installing Dwmblocks" "install_dwmblocks"
+run_step "Installing Dmenu" "install_dmenu"
+run_step "Installing St" "install_st"
+run_step "Installing QEMU" "install_qemu"
+run_step "Installing Transmission" "install_transmission"
+run_step "Installing Browser" "install_browser"
+run_step "Installing Zsh" "install_zsh"
+run_step "Installing XDM" "install_xdm"
+run_step "Installing Rclone" "install_rclone"
+run_step "Installing Podman" "install_podman"
+run_step "Installing LXD" "install_lxd"
+finish
+
+exit 0

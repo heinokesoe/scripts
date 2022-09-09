@@ -1,0 +1,147 @@
+#!/bin/bash
+
+title() {
+    clear
+    echo -ne "
+################################################################################
+#                                                                              #
+#      This is Automated Podman Containers Setup Script for Selfhosting        #
+#                                                                              #
+#                                    By                                        #
+#                                                                              #
+#                               Hein Oke Soe                                   #
+#                                                                              #
+################################################################################
+
+"
+}
+
+check_command() {
+    check_command_result=()
+    for i in $@; do
+        if ! command -v $i &>/dev/null; then
+            check_command_result+=("$i")
+        fi
+    done
+}
+
+export red="\033[0;31m"
+export normal="\033[0m"
+
+spin() {
+	local i=0
+	local sp='/-\|'
+	local n=${#sp}
+	printf ' '
+	sleep 0.2
+	while true; do
+		printf '\b%s' "${sp:i++%n:1}"
+		sleep 0.2
+	done
+}
+
+run_step() {
+    msg="$1"
+    container="$2"
+    printf "$msg\n"
+    setup "$container"
+    if [[ $? -eq 0 ]]; then
+        printf "\n${msg%%\\*} is successful.\n"
+    else
+        printf "\n\n${red}Sorry! ${msg%%\\*} went wrong. $normal\n\n"
+        exit 1
+    fi
+}
+
+prepare_setup() {
+    printf "\nPreparing requirements\t"
+    spin &
+    spinpid=$!
+    trap 'kill $spinpid' SIGTERM SIGKILL
+    {
+        systemctl --user enable --now podman
+        systemctl --user enable --now podman-auto-update.timer
+        podman network create traefik
+    } &>/dev/null
+    source <(curl -sL freaks.dev/scripts/select_option)
+    export SELFHOSTDIR=$HOME/selfhost
+    export IP=$(curl -s ip.me)
+    if ! grep SELFHOSTDIR ~/.bashrc &>/dev/null ; then
+        echo "export SELFHOSTDIR=$SELFHOSTDIR" >> ~/.bashrc
+        echo "export IP=$IP" >> ~/.bashrc
+    fi
+    git clone https://github.com/heinokesoe/selfhost-with-containers ~/selfhost &>/dev/null
+    if [[ $? -eq 0 ]]; then
+        kill $spinpid
+        printf "\b \t\t[Done]\n"
+        start_setup
+    else
+        kill $spinpid
+        printf "\b \t\t$red[Failed]$normal\n"
+        printf "\n\n${red}Sorry! Preparing requirements went wrong. $normal\n\n"
+        exit 1
+    fi
+}
+
+continue_or_exit() {
+    echo -e "\nDo you want to go back to menu or exit?"
+    options=("Go back to menu" "Exit")
+    select_option $? 2 "${options[@]}"
+
+    case $? in
+    0) title
+        start_setup;;
+    1) exit;;
+    esac
+}
+
+setup() {
+    ${SELFHOSTDIR}/$1/start
+}
+
+start_setup() {
+    echo -e "\n\nChoose one to install: "
+    options=("Coturn" "Dozzle" "Filebrowser" "Gitea" "Glider" "KMS" "Mirotalk" "Lighttpd" "Qbittorrent" "Rustdesk" "Rustpad" "Rwtxt" "Screego" "Traefik" "Exit")
+    select_option $? 3 "${options[@]}"
+
+    case $? in
+        0) run_step "Setting up Coturn container" "coturn"
+            continue_or_exit;;
+        1) run_step "Setting up Dozzle container" "dozzle"
+            continue_or_exit;;
+        2) run_step "Setting up Filebrowser container" "filebrowser"
+            continue_or_exit;;
+        3) run_step "Setting up Gitea container" "gitea"
+            continue_or_exit;;
+        4) run_step "Setting up Glider container" "glider"
+            continue_or_exit;;
+        5) run_step "Setting up KMS container" "kms"
+            continue_or_exit;;
+        6) run_step "Setting up Mirotalk container" "mirotalk"
+            continue_or_exit;;
+        7) run_step "Setting up Lighttpd container" "lighttpd"
+            continue_or_exit;;
+        8) run_step "Setting up Qbittorrent container" "qbittorrent"
+            continue_or_exit;;
+        9) run_step "Setting up Rustdesk container" "rustdesk"
+            continue_or_exit;;
+        10) run_step "Setting up Rustpad container" "rustpad"
+            continue_or_exit;;
+        11) run_step "Setting up Rwtxt container" "rwtxt"
+            continue_or_exit;;
+        12) run_step "Setting up Screego container" "screego"
+            continue_or_exit;;
+        13) run_step "Setting up Traefik container" "traefik"
+            continue_or_exit;;
+        14) exit;;
+    esac
+}
+
+check_command git podman podman-compose
+if [[ ${#check_command_result[@]} -ne 0 ]]; then
+    echo -e "\n\n${red}${check_command_result[@]} need to be installed first.$normal\n\n"
+    exit 1
+fi
+title
+prepare_setup
+exit 0
